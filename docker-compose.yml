@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  # Database
+  postgres:
+    image: postgres:15
+    container_name: budget_postgres
+    environment:
+      POSTGRES_DB: family_budget
+      POSTGRES_USER: budget_user
+      POSTGRES_PASSWORD: budget_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - budget_network
+
+  # Redis for caching (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: budget_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - budget_network
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: budget_backend
+    environment:
+      - DATABASE_URL=postgresql://budget_user:budget_password@postgres:5432/family_budget
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./backend:/app
+    networks:
+      - budget_network
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: budget_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - budget_network
+    restart: unless-stopped
+
+  # Telegram Bot
+  telegram-bot:
+    build:
+      context: ./telegram-bot
+      dockerfile: Dockerfile
+    container_name: budget_telegram_bot
+    environment:
+      - DATABASE_URL=postgresql://budget_user:budget_password@postgres:5432/family_budget
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - postgres
+      - backend
+    volumes:
+      - ./telegram-bot:/app
+    networks:
+      - budget_network
+    restart: unless-stopped
+
+  # Nginx (optional - for production)
+  nginx:
+    image: nginx:alpine
+    container_name: budget_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - frontend
+      - backend
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - budget_network
+    profiles:
+      - production
+
+volumes:
+  postgres_data:
+
+networks:
+  budget_network:
+    driver: bridge
